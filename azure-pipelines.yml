@@ -5,32 +5,51 @@
 
 trigger:
 - master
-
-pool:
-  vmImage: 'ubuntu-latest'
-strategy:
-  matrix:
-    Python27:
-      python.version: '2.7'
-    Python35:
-      python.version: '3.5'
-    Python36:
-      python.version: '3.6'
-    Python37:
-      python.version: '3.7'
-
-steps:
-- task: UsePythonVersion@0
-  inputs:
-    versionSpec: '$(python.version)'
-  displayName: 'Use Python $(python.version)'
-
-- script: |
-    python -m pip install --upgrade pip
-    pip install -r requirements.txt
-  displayName: 'Install dependencies'
-
-- script: |
-    pip install pytest pytest-azurepipelines
-    pytest
-  displayName: 'pytest'
+jobs:
+- job: buildandtest
+  pool:
+    vmImage: 'ubuntu-latest'
+  steps:
+  - script: |
+      echo setting up python
+    displayName: 'Setup Python 3.6'
+  - task: UsePythonVersion@0
+    inputs:
+      versionSpec: '3.6'
+  - script: |
+      make install
+    displayName: 'Install dependencies'  
+  - script: |
+      make lint
+    displayName: 'Linting with pylint'
+  - script: |
+      make test
+    displayName: 'Test with pytest'
+    # publish an artifact called drop
+  - task: CopyFiles@2
+    inputs:
+      sourceFolder: $(Build.SourcesDirectory)
+      targetFolder: $(Build.ArtifactStagingDirectory)
+  - task: PublishBuildArtifacts@1
+    inputs:
+      pathToPublish: '$(Build.ArtifactStagingDirectory)'
+      artifactName: drop
+- job: deploy
+  pool:
+    vmImage: 'ubuntu-16.04'      
+  dependsOn: buildandtest
+  condition: succeeded()
+  steps:
+  # download the artifact drop from the previous job
+  - task: DownloadBuildArtifacts@0
+    inputs:
+      artifactName: drop
+      downloadPath: '$(Build.ArtifactStagingDirectory)'
+  # deploy to Azure Web App production
+  - task: AzureWebApp@1
+    inputs:
+      azureSubscription: 'flaskappconnection'
+      appName: 'mflaskapp'
+      appType: webApp
+      package: '$(Build.ArtifactStagingDirectory)'
+      startUpCommand: python3 app.py
